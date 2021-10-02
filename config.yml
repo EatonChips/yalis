@@ -1,0 +1,15 @@
+username: ""
+password: ""
+format: "csv"
+delimeter: ","
+delay: 1
+user-agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.14; rv:70.0) Gecko/20100101 Firefox/70.0"
+start: 0
+count: 20
+empty-threshold: 3
+# input-file: ""
+# output-file: "linkedin.csv"
+# id:
+#   - 123
+# name:
+#   - "Company LLC."

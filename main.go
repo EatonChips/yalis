@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -11,14 +10,20 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync"
+
+	"github.com/fatih/color"
+	flag "github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
 
 var (
-	companyID   string
-	companyName string
-	username    string
-	password    string
+	companyID    string
+	companyName  string
+	companyIDs   []string
+	companyNames []string
+	companyFile  string
+	username     string
+	password     string
 
 	inputFileName  string
 	outputFileName string
@@ -31,43 +36,86 @@ var (
 	start          int
 	count          int
 	emptyThreshold int
-	cookieURL      *url.URL
-	totalResults   int = 0
+
+	configFileName string
+
+	cookieURL    *url.URL
+	totalResults int = 0
 )
 
 const (
-	csvHeader = "firstname,lastname,occupation,link"
+	csvHeader = "companyID,firstname,lastname,occupation,link"
 )
 
 func init() {
-	flag.StringVar(&companyID, "id", "", "Company ID (required)")
-	flag.StringVar(&companyName, "name", "", "Company Name to lookup")
-	flag.StringVar(&username, "u", "", "LinkedIn Username (required)")
-	flag.StringVar(&password, "p", "", "LinkedIn Password (required)")
-	flag.StringVar(&inputFileName, "i", "", "Input File")
-	flag.StringVar(&outputFileName, "o", "", "Output File")
-	flag.IntVar(&delay, "d", 1, "Number of seconds to delay between requests")
-	flag.StringVar(&format, "f", "", "Format of output (csv, {first}.{last})")
-	flag.IntVar(&start, "s", 0, "What part of list to start at")
-	flag.IntVar(&count, "c", 20, "Results per request")
-	flag.StringVar(&userAgent, "a", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.14; rv:70.0) Gecko/20100101 Firefox/70.0", "User agent")
-	flag.IntVar(&emptyThreshold, "e", 3, "Number of empty responses before quitting worker")
-	flag.StringVar(&delimeter, "delim", ",", "Delimeter")
+	flag.StringSliceVar(&companyIDs, "id", []string{}, "Company IDs (required)")
+	flag.StringSliceVar(&companyNames, "name", []string{}, "Company names to lookup")
+	flag.StringVarP(&configFileName, "config", "c", "", "Configuration File")
+	flag.StringVarP(&username, "username", "u", "", "LinkedIn Username (required)")
+	flag.StringVarP(&password, "password", "p", "", "LinkedIn Password (required)")
+	flag.StringVarP(&inputFileName, "input-file", "i", "", "Input File")
+	flag.StringVarP(&outputFileName, "output-file", "o", "", "Output File")
+	flag.IntVarP(&delay, "delay", "d", 1, "Number of seconds to delay between requests")
+	flag.StringVarP(&format, "format", "f", "", "Format of output (csv, {first}.{last})")
+	flag.IntVarP(&start, "start", "s", 0, "What part of list to start at")
+	flag.IntVarP(&count, "count", "n", 20, "Results per request")
+	flag.StringVarP(&userAgent, "user-agent", "a", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.14; rv:70.0) Gecko/20100101 Firefox/70.0", "User agent")
+	flag.IntVarP(&emptyThreshold, "empty-threshold", "e", 3, "Number of empty responses before quitting worker")
+	flag.StringVarP(&delimeter, "delimeter", "m", ",", "Delimeter")
 	flag.Parse()
 
+	fmt.Println(configFileName)
+
+	viper.BindPFlags(flag.CommandLine)
+	viper.SetConfigType("yaml")
+
+	// If no config provided, attempt to load from ./config.yml
+	if configFileName == "" {
+		viper.SetConfigName("config")
+		viper.AddConfigPath(".")
+		viper.ReadInConfig()
+	} else {
+		log.Printf("Using config file: %s\n", configFileName)
+		f, err := os.Open(configFileName)
+		if err != nil {
+			panic(err)
+		}
+		defer f.Close()
+
+		viper.ReadConfig(f)
+	}
+
+	// Use config variables
+	companyIDs = viper.GetStringSlice("id")
+	companyNames = viper.GetStringSlice("name")
+	username = viper.GetString("username")
+	password = viper.GetString("password")
+	inputFileName = viper.GetString("input-file")
+	outputFileName = viper.GetString("output-file")
+	format = viper.GetString("format")
+	delimeter = viper.GetString("delimeter")
+	delay = viper.GetInt("delay")
+	userAgent = viper.GetString("user-agent")
+	start = viper.GetInt("start")
+	count = viper.GetInt("count")
+	emptyThreshold = viper.GetInt("empty-threshold")
+
 	if inputFileName == "" {
-		if companyID == "" && companyName == "" {
-			fmt.Println("-id required!")
+		if len(companyIDs) == 0 && len(companyNames) == 0 && companyFile == "" {
+			fmt.Println("No input option specified. Supports:\n")
+			fmt.Println("\t--id Company id")
+			fmt.Println("\t--name Company name")
+			fmt.Println("\t--id-file File of company ids or names\n")
 			flag.Usage()
 			os.Exit(1)
 		}
 		if username == "" {
-			fmt.Println("-u required")
+			fmt.Println("--username or -u required")
 			flag.Usage()
 			os.Exit(1)
 		}
 		if password == "" {
-			fmt.Println("-p required")
+			fmt.Println("--password or -p required")
 			flag.Usage()
 			os.Exit(1)
 		}
@@ -86,7 +134,7 @@ func main() {
 		outFile, err = os.OpenFile(outputFileName,
 			os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
-			log.Fatal(err)
+			printError(err.Error())
 		}
 
 		defer outFile.Close()
@@ -96,7 +144,7 @@ func main() {
 	if inputFileName != "" {
 		fileBytes, err := ioutil.ReadFile(inputFileName)
 		if err != nil {
-			log.Fatal(err)
+			printError(err.Error())
 		}
 
 		fileLoaded := false
@@ -120,9 +168,9 @@ func main() {
 					}
 
 					fields := strings.Split(line, delimeter)
-          if len(fields) < 2 {
-            continue
-          }
+					if len(fields) < 2 {
+						continue
+					}
 					p := Person{
 						FirstName: fields[0],
 						LastName:  fields[1],
@@ -134,12 +182,15 @@ func main() {
 					if len(fields) >= 4 {
 						p.PublicIdentifier = fields[3]
 					}
+					if len(fields) >= 5 {
+						p.CompanyID = fields[4]
+					}
 
 					// If formatting name
 					if !strings.Contains(format, "raw") {
 						p, err = FormatName(p)
 						if err != nil {
-							log.Printf("Unable to format %s %s. %s\n", p.FirstName, p.LastName, err.Error())
+							printError(fmt.Sprintf("Unable to format %s %s. %s\n", p.FirstName, p.LastName, err.Error()))
 							continue
 						}
 					}
@@ -152,13 +203,13 @@ func main() {
 		}
 
 		if !fileLoaded {
-			fmt.Printf("%s is in an unknown format, quitting...\n", inputFileName)
+			printError(fmt.Sprintf("%s is in an unknown format, quitting...\n", inputFileName))
 			return
 		}
 
 		output, err := FormatOutput(personList)
 		if err != nil {
-			log.Fatal(err)
+			printError(fmt.Sprintf("%s - %s", "Unable to format", err.Error()))
 		}
 
 		if outputFileName != "" {
@@ -167,166 +218,93 @@ func main() {
 			fmt.Println(string(output))
 		}
 
-		// file, err := os.Open(inputFileName)
-		// if err != nil {
-		// 	log.Fatal(err)
-		// }
-		// defer file.Close()
-
-		// // Read file line by line
-		// scanner := bufio.NewScanner(file)
-		// for scanner.Scan() {
-		// 	line := scanner.Text()
-
-		// 	// Split line by delimeter
-		// 	fields := strings.Split(line, delimeter)
-		// 	if len(fields) >= 2 {
-		// 		tmpLastName := strings.Join(fields[1:], " ")
-		// 		p := Person{
-		// 			FirstName: fields[0],
-		// 			LastName:  tmpLastName,
-		// 		}
-
-		// 		//
-		// 		if strings.Contains(format, "raw") {
-		// 			personList = append(personList, p)
-		// 		} else {
-		// 			formatted, err := FormatName(p)
-		// 			if err != nil {
-		// 				log.Printf("Error formatting %s %s - %s\n", p.FirstName, p.LastName, err.Error())
-		// 			} else {
-
-		// 			}
-		// 			fmt.Println(formatted)
-		// 		}
-
-		// 		// if outputFileName == "" {
-		// 		// } else {
-		// 		// 	if format == "" || format == "csv" || format == "raw_csv" {
-		// 		// 		if _, err := outFile.WriteString(formatted + "\n"); err != nil {
-		// 		// 			log.Println(err)
-		// 		// 		}
-		// 		// 	} else if format == "json" || format == "raw_json" {
-		// 		// 		// jsonOut, err := json.Marshal()
-		// 		// 	}
-		// 		// }
-		// 	}
-		// }
-
-		// if err := scanner.Err(); err != nil {
-		// 	log.Fatal(err)
-		// }
-
 		return
 	}
 
-	// If scraping...
-	usernames := strings.Split(username, ",")
-	passwords := strings.Split(password, ",")
+	// Login to LinkedIn
+	jar, _ := cookiejar.New(nil)
+	c := http.Client{Jar: jar}
 
-	// Check username vs password lists
-	if len(usernames) != len(passwords) {
-		flag.Usage()
-		fmt.Println("\nPlease enter same number of usernames and passwords.")
-		os.Exit(0)
+	err = login(&c, username, password)
+	if err != nil {
+		printError(fmt.Sprintf("%s Error logging in. - %s\n", username, err.Error()))
+		os.Exit(1)
 	}
 
-	// Login each client
-	clients := []*http.Client{}
-	for i, u := range usernames {
-		jar, _ := cookiejar.New(nil)
-		c := http.Client{Jar: jar}
+	printInfo(fmt.Sprintf("%s Logged in successfully!\n", username))
 
-		err := login(&c, u, passwords[i])
+	// Get company IDs from names
+	for _, name := range companyNames {
+		id, err := getCompanyID(&c, name)
 		if err != nil {
-			log.Printf("%s Error logging in. - %s\n", u, err.Error())
-			continue
+			printError(err.Error())
 		}
-
-		log.Printf("%s Logged in successfully!\n", u)
-
-		clients = append(clients, &c)
+		companyIDs = append(companyIDs, id)
 	}
 
-	if len(clients) == 0 {
-		log.Println("No valid users. Quitting...")
-		return
-	}
+	// Loop through each company
+	for _, id := range companyIDs {
+		startIndex := 0
+		emptyResponses := 0
 
-	// If no id supplied, get from company name
-	if companyID == "" {
-		id, err := getCompanyID(clients[0], companyName)
-		if err != nil {
-			log.Printf("Could not get company id: %s\n", err.Error())
-			return
-		}
-
-		companyID = id
-	}
-
-	wg := sync.WaitGroup{}
-
-	for i, c := range clients {
-		wg.Add(1)
-		go func(i int, c *http.Client) {
-			startIndex := start
-			emptyResponses := 0
-
-			for emptyResponses < emptyThreshold {
-				people, err := getPeople(c, startIndex)
-				if err != nil {
-					log.Printf("Error getting people, %s\n", err.Error())
-				}
-
-				for _, p := range people {
-					log.Printf("Account %d found %s %s - %s\n", i, p.FirstName, p.LastName, p.Occupation)
-
-					if !strings.Contains(format, "raw") {
-						p, err = FormatName(p)
-						if err != nil {
-							log.Printf("Unable to format %s %s. %s\n", p.FirstName, p.LastName, err.Error())
-							continue
-						}
-					}
-
-					personList = appendIfMissing(personList, p)
-				}
-
-				startIndex += count * len(clients)
-				if len(people) == 0 {
-					emptyResponses++
-				}
+		// Until no more results
+		for emptyResponses < emptyThreshold {
+			// Make API call
+			people, err := getPeople(&c, id, startIndex)
+			if err != nil {
+				printError(fmt.Sprintf("Error getting people, %s", err.Error()))
 			}
 
-			wg.Done()
-		}(i, c)
+			// Loop over results
+			for _, p := range people {
+				printSuccess(fmt.Sprintf("Discovered %s %s - %s", p.FirstName, p.LastName, p.Occupation))
+
+				// Don't format name if 'raw' format
+				if !strings.Contains(format, "raw") {
+					p, err = FormatName(p)
+					if err != nil {
+						printError(fmt.Sprintf("Unable to format %s %s. %s", p.FirstName, p.LastName, err.Error()))
+						continue
+					}
+				}
+
+				// Add new people to list
+				personList = appendIfMissing(personList, p)
+			}
+
+			startIndex += count
+			if len(people) == 0 {
+				emptyResponses++
+			}
+		}
 	}
 
-	wg.Wait()
-
+	// Format scraped person list
 	output, err := FormatOutput(personList)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	// Write output
 	if outputFileName != "" {
 		_, err := outFile.Write(output)
 		if err != nil {
-			log.Fatalf("Unable to write to output file %s. %s\n", outputFileName, err.Error())
+			printError(fmt.Sprintf("Unable to write to output file %s. %s\n", outputFileName, err.Error()))
 		}
 	} else {
 		fmt.Println(string(output))
 	}
 
-	// people, err := getPeople(clients[0], 0)
-	// if err != nil {
-	// 	panic(err)
-	// }
+}
 
-	// m := map[Person]bool{}
+func printError(s string) {
+	fmt.Println(color.RedString("[!]"), s)
+}
 
-	// for _, p := range people {
-	// 	fmt.Println(p.FirstName, p.LastName)
-	// }
+func printSuccess(s string) {
+	fmt.Println(color.GreenString("[+]"), s)
+}
 
+func printInfo(s string) {
+	fmt.Println(color.BlueString("[*]"), s)
 }

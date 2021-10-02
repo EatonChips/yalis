@@ -120,6 +120,10 @@ func getCompanyID(c *http.Client, name string) (string, error) {
 
 		// Display results
 		fmt.Println("Choosing company:\n")
+		if len(searchData.Data.Elements) == 0 {
+			return "", errors.New("No companies found")
+		}
+
 		for i, e := range searchData.Data.Elements[0].Elements {
 			splitURN := strings.Split(e.TargetURN, ":")
 			id := splitURN[len(splitURN)-1]
@@ -145,11 +149,11 @@ func getCompanyID(c *http.Client, name string) (string, error) {
 	return "", nil
 }
 
-func getPeople(c *http.Client, start int) ([]Person, error) {
+func getPeople(c *http.Client, companyID string, start int) ([]Person, error) {
 	searchEndpoint := "https://www.linkedin.com/voyager/api/search/hits"
 	query := fmt.Sprintf("?count=%d&educationEndYear=List()&educationStartYear=List()&facetCurrentCompany=List(%s)&facetCurrentFunction=List()&facetFieldOfStudy=List()&facetGeoRegion=List()&facetNetwork=List()&facetSchool=List()&facetSkillExplicit=List()&keywords=List()&maxFacetValues=15&origin=organization&q=people&start=%d&supportedFacets=List(GEO_REGION,SCHOOL,CURRENT_COMPANY,CURRENT_FUNCTION,FIELD_OF_STUDY,SKILL_EXPLICIT,NETWORK)", count, companyID, start)
 
-	// Build search requiest
+	// Build search request
 	req, err := http.NewRequest("GET", searchEndpoint+query, nil)
 	if err != nil {
 		return nil, err
@@ -182,6 +186,7 @@ func getPeople(c *http.Client, start int) ([]Person, error) {
 
 	for _, p := range results.Included {
 		if p.FirstName != "" {
+			p.CompanyID = companyID
 			people = appendIfMissing(people, p)
 		}
 	}

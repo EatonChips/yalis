@@ -128,18 +128,10 @@ func FormatOutput(personList []Person) ([]byte, error) {
 
 	if format == "csv" || format == "raw_csv" {
 		output = append(output, []byte(csvHeader+"\n")...)
-		// _, err := outFile.WriteString(csvHeader)
-		// if err != nil {
-		// 	log.Fatalf("Unable to write to output file %s. %s\n", outputFileName, err.Error())
-		// }
 
 		for _, p := range personList {
-			line := fmt.Sprintf("%s,%s,%s,%s\n", p.FirstName, p.LastName, p.Occupation, p.PublicIdentifier)
+			line := fmt.Sprintf("%s,%s,%s,%s,%s\n", p.FirstName, p.LastName, p.Occupation, p.PublicIdentifier, p.CompanyID)
 			output = append(output, []byte(line)...)
-			// _, err := outFile.WriteString(line)
-			// if err != nil {
-			// 	log.Fatalf("Unable to write to output file %s. %s\n", outputFileName, err.Error())
-			// }
 		}
 	} else if format == "json" || format == "raw_json" {
 		jsonBytes, err := json.MarshalIndent(personList, "", "  ")

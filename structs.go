@@ -6,6 +6,7 @@ type Person struct {
 	LastName         string `json:"lastName"`
 	PublicIdentifier string `json:"publicIdentifier"`
 	Occupation       string `json:"occupation"`
+	CompanyID        string `json:"companyId"`
 }
 
 // SearchResponse is the response from the search request
@@ -40,4 +41,16 @@ type CompanyLookupResponse struct {
 			UniversalName string `json:"universalName"`
 		}
 	} `json:"data"`
+}
+
+// StringSlice is a slice of strings
+type StringSlice []string
+
+func (i *StringSlice) String() string {
+	return "asdf"
+}
+
+func (i *StringSlice) Set(value string) error {
+	*i = append(*i, value)
+	return nil
 }
