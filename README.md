@@ -15,7 +15,7 @@ $ yalis -u legitimate@email.com -p Password123 --name "Company Name Inc." -f csv
 #### Formatting Employee Names
 
 ```
-yalis -u legitimate@email.com -p Password123 -f {f}{last} -o yalis-users.txt
+yalis -i yalis-1234.csv -f {f}{last} -o yalis-users.txt
 ```
 
 ## Usage
