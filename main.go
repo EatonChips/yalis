@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/fatih/color"
 	flag "github.com/spf13/pflag"
@@ -276,6 +277,7 @@ func main() {
 			if len(people) == 0 {
 				emptyResponses++
 			}
+			time.Sleep(time.Duration(delay) * time.Second)
 		}
 	}
 
