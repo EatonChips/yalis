@@ -45,7 +45,7 @@ var (
 )
 
 const (
-	csvHeader = "companyID,firstname,lastname,occupation,link"
+	csvHeader = "firstname,lastname,occupation,link,companyID"
 )
 
 func init() {
